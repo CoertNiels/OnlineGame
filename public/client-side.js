@@ -9,6 +9,107 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// Initialize the game page after successful validation
+function initializeGamePage(username) {
+    // Update UI with username
+    document.getElementById('usernameDisplay').textContent = username;
+    
+    // Connect WebSocket
+    connectWebSocket();
+    
+    // Initialize lobby
+    initializeLobby();
+}
+
+// WebSocket connection
+function connectWebSocket() {
+    const ws = new WebSocket('ws://' + window.location.host);
+    
+    ws.onopen = () => {
+        console.log('WebSocket connected');
+        // Send login message with token
+        ws.send(JSON.stringify({ type: 'login', token: localStorage.getItem('userToken') }));
+        
+        // Request online users
+        ws.send(JSON.stringify({ type: 'getOnlineUsers' }));
+    };
+    
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        switch (data.type) {
+            case 'onlineUsers':
+                updateOnlineUsers(data.users);
+                break;
+            case 'error':
+                showError(data.message);
+                break;
+        }
+    };
+    
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        showError('Connection error. Please try again.');
+    };
+    
+    ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        // TODO: Handle reconnection logic
+    };
+}
+
+// Initialize lobby UI
+function initializeLobby() {
+    // Add event listener for logout button
+    document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+    
+    // Add event listener for user list items
+    const userList = document.getElementById('userList');
+    userList.addEventListener('click', (event) => {
+        if (event.target.tagName === 'LI' && !event.target.classList.contains('playing')) {
+            const username = event.target.textContent;
+            sendGameInvite(username);
+        }
+    });
+}
+
+// Handle logout
+function handleLogout() {
+    localStorage.removeItem('userToken');
+    document.cookie = 'userToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    localStorage.removeItem('username');
+    window.location.href = '/login.html';
+}
+
+// Update online users list
+function updateOnlineUsers(users) {
+    const userList = document.getElementById('userList');
+    userList.innerHTML = '';
+    
+    users.forEach(user => {
+        const li = document.createElement('li');
+        li.textContent = user.username;
+        if (user.isPlaying) {
+            li.classList.add('playing');
+        }
+        userList.appendChild(li);
+    });
+}
+
+// Send game invite
+function sendGameInvite(username) {
+    const ws = new WebSocket('ws://' + window.location.host);
+    
+    ws.onopen = () => {
+        ws.send(JSON.stringify({
+            type: 'invite',
+            inviteeToken: localStorage.getItem('userToken'),
+            inviteeUsername: username
+        }));
+        ws.close();
+    };
+}
+
 // Helper function to get token from either storage
 function getStoredToken() {
     // Check localStorage first
@@ -43,12 +144,12 @@ async function validateToken() {
         }
 
         // Send token for validation
-        const response = await fetch('/api/login', {
+        const response = await fetch('/api/validateToken', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ username: localStorage.getItem('username') })
+            body: JSON.stringify({ token: userToken })
         });
 
         const data = await response.json();
@@ -67,8 +168,13 @@ async function validateToken() {
         document.cookie = `userToken=${data.userToken}; path=/; max-age=31536000`;
         localStorage.setItem('username', data.username);
 
-        // Redirect to index.html
-        window.location.href = '/index.html';
+        // Only redirect if we're not already on index.html
+        if (window.location.pathname !== '/index.html') {
+            window.location.href = '/index.html';
+        } else {
+            // Initialize the game page
+            initializeGamePage(data.username);
+        }
 
     } catch (error) {
         console.error('Error validating token:', error);

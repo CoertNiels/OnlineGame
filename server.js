@@ -37,8 +37,34 @@ const db = new sqlite3.Database('users.db', (err) => {
 });
 
 // API endpoints
-app.post('/api/login', express.json(), (req, res) => {
-  const { username } = req.body;
+app.post('/api/validateToken', express.json(), (req, res) => {
+  const { token } = req.body;
+  
+  if (!token) {
+    return res.status(400).json({ error: 'Token is required' });
+  }
+
+  db.get('SELECT username, userToken FROM users WHERE userToken = ?', 
+    [token],
+    (err, user) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+
+      res.json({
+        userToken: user.userToken,
+        username: user.username,
+        success: true
+      });
+    }
+  );
+});
+
+app.post('/api/login', express.json(), (req, res) => {  const { username } = req.body;
   
   if (!username || username.trim() === '') {
     return res.status(400).json({ error: 'Username is required' });
@@ -97,6 +123,9 @@ wss.on('connection', (ws) => {
       case 'makeMove':
         handleMove(ws, data.gameId, data.position);
         break;
+      case 'getOnlineUsers':
+        handleGetOnlineUsers(ws);
+        break;
       default:
         console.log('Unknown message type:', data.type);
     }
@@ -108,27 +137,45 @@ wss.on('connection', (ws) => {
 });
 
 function handleLogin(ws, token) {
-  db.get('SELECT * FROM users WHERE userToken = ?', [token], (err, row) => {
-    if (err) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Database error' }));
-      return;
+  db.get('SELECT username, userToken, isPlaying FROM users WHERE userToken = ?', 
+    [token],
+    (err, user) => {
+      if (err) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Database error' }));
+        return;
+      }
+
+      if (!user) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));
+        return;
+      }
+
+      userConnections.set(user.userToken, ws);
+      ws.send(JSON.stringify({ type: 'loginSuccess', username: user.username }));
     }
+  );
+}
 
-    if (!row) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));
-      ws.close();
-      return;
+function handleGetOnlineUsers(ws) {
+  db.all('SELECT username, userToken, isPlaying FROM users WHERE isPlaying = 0', 
+    (err, users) => {
+      if (err) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Database error' }));
+        return;
+      }
+
+      // Filter out users without active connections
+      const activeUsers = users.filter(user => userConnections.has(user.userToken));
+      
+      ws.send(JSON.stringify({
+        type: 'onlineUsers',
+        users: activeUsers.map(user => ({
+          username: user.username,
+          isPlaying: user.isPlaying
+        }))
+      }));
     }
-
-    userConnections.set(token, ws);
-    ws.send(JSON.stringify({ type: 'loginSuccess', username: row.username }));
-
-    // Send list of available users
-    db.all('SELECT username, userToken FROM users WHERE isPlaying = 0', (err, rows) => {
-      if (err) return;
-      ws.send(JSON.stringify({ type: 'userList', users: rows }));
-    });
-  });
+  );
 }
 
 function handleInvite(ws, inviteeToken) {
