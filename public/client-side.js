@@ -1,6 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
     // Check both localStorage and cookies for userToken
     const userToken = getStoredToken();
+    
+    // If no token and we're on index.html, redirect to login
+    if (!userToken && window.location.pathname === '/index.html') {
+        window.location.href = '/login.html';
+        return;
+    }
+    
     if (userToken) {
         // If token exists, attempt immediate validation
         validateToken();
@@ -60,6 +67,22 @@ function connectWebSocket() {
 
 // Initialize lobby UI
 function initializeLobby() {
+    // Add event listener for refresh button
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+        // Request online users
+        const ws = new WebSocket('ws://' + window.location.host);
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'getOnlineUsers' }));
+        };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'onlineUsers') {
+                updateOnlineUsers(data.users);
+                ws.close();
+            }
+        };
+    });
+
     // Add event listener for logout button
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
     
